@@ -1,0 +1,1 @@
+# Playground for PyOpenGL study
