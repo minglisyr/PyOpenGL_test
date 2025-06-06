@@ -1,20 +1,4 @@
-#version 330 core
-
-layout (location=0) in vec3 fragmentColor;
-layout (location=1) in vec2 fragmentTexCoord;
-layout (location=2) in vec3 fragmentNormal;
-
-uniform Material material;
-uniform Light lights[MAX_LIGHT_COUNT];
-uniform vec3 cameraPos;
-uniform vec3 ambient;
-
-layout (location=0) out vec4 color;
-
-void main()
-{
-    color = vec4(fragmentColor, 1.0f);
-}#version 430 core
+#version 430 core
 
 struct Material {
     sampler2D albedo;
@@ -32,6 +16,7 @@ struct Light {
 in vec3 fragmentPos;
 in vec2 fragmentTexCoord;
 in vec3 fragmentViewPos;
+in mat3 TBN;
 
 uniform Material material;
 uniform Light lights[8];
@@ -65,7 +50,8 @@ vec3 CalculatePointLight(int i, vec3 normal) {
 void main()
 {
 
-    vec3 normal = -normalize(vec3(1.0) - 2.0 * texture(material.normal, fragmentTexCoord).xyz);
+    vec3 normal = normalize(vec3(-1.0) + 2.0 * texture(material.normal, fragmentTexCoord).xyz);
+    normal = TBN * normal;
     
     //ambient
     vec3 lightLevel = ambient * vec3(texture(material.albedo, fragmentTexCoord));

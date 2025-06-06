@@ -25,7 +25,7 @@ void main()
     vec3 T = normalize(vec3(model * vec4(vertexTangent, 0)));
     vec3 B = normalize(vec3(model * vec4(vertexBitangent, 0)));
     vec3 N = normalize(vec3(model * vec4(vertexNormal, 0)));
-    TBN = transpose(mat3(T, B, N));
+    TBN = mat3(T, B, N);
     
     fragmentPos = vec3(model * vec4(vertexPos, 1.0));
     fragmentTexCoord = vertexTexCoord;

@@ -31,12 +31,17 @@ UNIFORM_TYPE = {
     "LIGHT_POS": 5,
     "LIGHT_STRENGTH": 6,
     "TINT": 7,
-    "MODEL": 8,
 }
 
 PIPELINE_TYPE = {
     "STANDARD": 0,
     "EMISSIVE": 1,
+}
+
+COMPONENT_TYPE = {
+    "DEFAULT": 0,
+    "TRANSFORM": 1,
+    "COLOR": 2,
 }
 #endregion
 ############################## helper functions ###############################
@@ -216,8 +221,121 @@ def make_corner(corner_description: str,
     for element in bitangent:
         vertices.append(element)
 #endregion
+############################### Data Schema ###################################
+#region
+"""
+    Cube:
+    position: 3
+    eulers: 3
+    euler_velocity: 3
+
+    stride: 9
+"""
+"""
+    Light:
+    position: 3
+    color: 3
+    strength: 1
+
+    stride: 7
+"""
+"""
+    Transform:
+
+    stride: 16
+"""
+"""
+    Color:
+
+    stride: 4
+"""
+#endregion
 ##################################### Model ###################################
 #region
+def update_cubes(
+    cubes: np.ndarray, transforms: np.ndarray, 
+    count: int, rate: float) -> None:
+    """
+        Update all those cubes! Also, write the transform matrices to the given array.
+    """
+
+    for i in range(count):
+
+        #unpack cube data
+        index = 9 * i
+        x    = cubes[index]
+        y    = cubes[index + 1]
+        z    = cubes[index + 2]
+        e_x  = cubes[index + 3]
+        e_y  = cubes[index + 4]
+        e_z  = cubes[index + 5]
+        ev_x = cubes[index + 6]
+        ev_y = cubes[index + 7]
+        ev_z = cubes[index + 8]
+
+        #update cube data
+        e_x = (e_x + rate * ev_x) % 360
+        e_y = (e_y + rate * ev_y) % 360
+        e_z = (e_z + rate * ev_z) % 360
+
+        #write transforms
+        index = 16 * i
+
+        r_y = np.radians(e_y)
+        r_z = np.radians(e_z)
+        c_y = np.cos(r_y)
+        s_y = np.sin(r_y)
+        c_z = np.cos(r_z)
+        s_z = np.sin(r_z)
+
+        transforms[index]      = c_y * c_z
+        transforms[index + 1]  = c_y * s_z
+        transforms[index + 2]  = -s_y
+        transforms[index + 4]  = -s_z
+        transforms[index + 5]  = c_z
+        transforms[index + 8]  = s_y * c_z
+        transforms[index + 9]  = s_y * s_z
+        transforms[index + 10] = c_y
+        transforms[index + 12] = x
+        transforms[index + 13] = y
+        transforms[index + 14] = z
+        transforms[index + 15] = 1.0
+
+        #write cube data back
+        index = 9 * i
+        cubes[index + 3] = e_x
+        cubes[index + 4] = e_y
+        cubes[index + 5] = e_z
+        cubes[index + 6] = ev_x
+        cubes[index + 7] = ev_y
+        cubes[index + 8] = ev_z
+
+def update_lights(
+    lights: np.ndarray, transforms: np.ndarray, count: int) -> None:
+    """
+        Write the transform matrices to the given array.
+        Lights don't have much updating to do.
+    """
+
+    for i in range(count):
+
+        #unpack light data
+        index = 7 * i
+        x    = lights[index]
+        y    = lights[index + 1]
+        z    = lights[index + 2]
+
+        #write transforms
+        index = 16 * i
+
+        transforms[index]      = 1.0
+        transforms[index + 5]  = 1.0
+        transforms[index + 10] = 1.0
+        transforms[index + 12] = x
+        transforms[index + 13] = y
+        transforms[index + 14] = z
+        transforms[index + 15] = 1.0
+
 class Entity:
     """
         A basic object in the world, with a position and rotation.
@@ -240,116 +358,6 @@ class Entity:
         self.position = np.array(position, dtype=np.float32)
         self.eulers = np.array(eulers, dtype=np.float32)
 
-    def update(self, dt: float) -> None:
-        """
-            Update the object, this is meant to be implemented by
-            objects extending this class.
-
-            Parameters:
-
-                dt: framerate correction factor.
-        """
-
-        pass
-
-    def get_model_transform(self) -> np.ndarray:
-        """
-            Returns the entity's model to world
-            transformation matrix.
-        """
-
-        model_transform = pyrr.matrix44.create_identity(dtype=np.float32)
-
-        model_transform = pyrr.matrix44.multiply(
-            m1=model_transform, 
-            m2=pyrr.matrix44.create_from_axis_rotation(
-                axis = GLOBAL_Y,
-                theta = np.radians(self.eulers[1]), 
-                dtype = np.float32
-            )
-        )
-
-        model_transform = pyrr.matrix44.multiply(
-            m1=model_transform, 
-            m2=pyrr.matrix44.create_from_axis_rotation(
-                axis = GLOBAL_Z,
-                theta = np.radians(self.eulers[2]), 
-                dtype = np.float32
-            )
-        )
-
-        return pyrr.matrix44.multiply(
-            m1=model_transform, 
-            m2=pyrr.matrix44.create_from_translation(
-                vec=np.array(self.position),dtype=np.float32
-            )
-        )
-
-class Cube(Entity):
-    """
-        A basic object in the world, with a position and rotation.
-    """
-    __slots__ = ("euler_velocity",)
-
-
-    def __init__(self, position: list[float], eulers: list[float],
-        euler_velocity: list[float]):
-        """
-            Initialize the cube.
-
-            Parameters:
-
-                position: the position of the entity.
-
-                eulers: the rotation of the entity
-                        about each axis.
-                
-                euler_velocity: the angular velocity of the cube. 
-        """
-
-        super().__init__(position, eulers)
-        self.euler_velocity = np.array(euler_velocity, dtype=np.float32)
-    
-    def update(self, dt: float) -> None:
-        """
-            Update the cube.
-
-            Parameters:
-
-                dt: framerate correction factor.
-
-                camera_pos: the position of the camera in the scene
-        """
-
-        self.eulers = np.mod(self.eulers + dt * self.euler_velocity, 
-            [360, 360, 360], dtype=np.float32)
-
-class PointLight(Entity):
-    """
-        A simple pointlight.
-    """
-    __slots__ = ("color", "strength")
-
-
-    def __init__(
-        self, position: list[float], 
-        color: list[float], strength: float):
-        """
-            Initialize the light.
-
-            Parameters:
-
-                position: position of the light.
-
-                color: (r,g,b) color of the light.
-
-                strength: strength of the light.
-        """
-
-        super().__init__(position, eulers = [0,0,0])
-        self.color = np.array(color, dtype=np.float32)
-        self.strength = strength
-
 class Camera(Entity):
     """
         A first person camera.
@@ -367,15 +375,11 @@ class Camera(Entity):
         """
 
         super().__init__(position, eulers = [0,0,0])
-        self.update(0)
+        self.update()
     
-    def update(self, dt: float) -> None:
+    def update(self) -> None:
         """
             Update the camera.
-
-            Parameters:
-
-                dt: framerate correction factor
         """
 
         theta = self.eulers[2]
@@ -393,17 +397,6 @@ class Camera(Entity):
         self.right = np.cross(self.forwards, GLOBAL_Z)
 
         self.up = np.cross(self.right, self.forwards)
-
-    def get_view_transform(self) -> np.ndarray:
-        """
-            Returns the camera's world to view
-            transformation matrix.
-        """
-
-        return pyrr.matrix44.create_look_at(
-            eye = self.position,
-            target = self.position + self.forwards,
-            up = self.up, dtype = np.float32)
 
     def get_view_transform(self) -> np.ndarray:
         """
@@ -440,7 +433,7 @@ class Scene:
     """
         Manages all objects and coordinates their interactions.
     """
-    __slots__ = ("entities", "player", "lights")
+    __slots__ = ("entity_counts", "entities", "player")
 
 
     def __init__(self):
@@ -448,37 +441,103 @@ class Scene:
             Initialize the scene.
         """
 
-        self.entities: dict[int, list[Entity]] = {
-            ENTITY_TYPE["CUBE"]: [
-                Cube(
-                    position = [
-                        np.random.uniform(low = -10, high = 10) 
-                        for _ in range(3)],
-                    eulers = [
-                        np.random.uniform(low = 0, high = 360) 
-                        for _ in range(3)],
-                    euler_velocity = [
-                        np.random.uniform(low = -0.1, high = 0.1) 
-                        for _ in range(3)]
-                )
-
-                for _ in range(32)
-            ],
+        self.entity_counts: dict[int, int] = {
+            ENTITY_TYPE["CUBE"]: 0,
+            ENTITY_TYPE["POINTLIGHT"]: 0
         }
 
-        self.lights: list[PointLight] = [
-            PointLight(
-                position = [np.random.uniform(low = -10, high = 10) for x in range(3)],
-                color = [np.random.uniform(low = 0.5, high = 1) for x in range(3)],
-                strength = 3
-            )
+        self.entities: dict[int, list[np.ndarray]] = {
 
-            for _ in range(8)
-        ]
+            ENTITY_TYPE["CUBE"]: [
+                np.zeros(200 * 9, dtype = np.float32),
+                np.zeros(200 * 16, dtype = np.float32)
+            ],
+            ENTITY_TYPE["POINTLIGHT"]: [
+                np.zeros(8 * 7, dtype = np.float32),
+                np.zeros(8 * 16, dtype = np.float32),
+                np.zeros(8 * 4, dtype = np.float32),
+            ]
+        }
+
+        self._make_cubes()
+
+        self._make_lights()
 
         self.player = Camera(
             position = [-10,0,0]
         )
+    
+    def _make_cubes(self) -> None:
+        """
+            Make the cubes!
+        """
+
+        for i in range(200):
+
+            x = np.random.uniform(low = -10, high = 10)
+            y = np.random.uniform(low = -10, high = 10)
+            z = np.random.uniform(low = -10, high = 10)
+
+            e_x = np.random.uniform(low = 0, high = 360)
+            e_y = np.random.uniform(low = 0, high = 360)
+            e_z = np.random.uniform(low = 0, high = 360)
+
+            ev_x = np.random.uniform(low = -0.2, high = 0.2)
+            ev_y = np.random.uniform(low = -0.2, high = 0.2)
+            ev_z = np.random.uniform(low = -0.2, high = 0.2)
+
+            index = 9 * i
+            target_array = self.entities[ENTITY_TYPE["CUBE"]][0]
+
+            target_array[index] = x
+            target_array[index + 1] = y
+            target_array[index + 2] = z
+            target_array[index + 3] = e_x
+            target_array[index + 4] = e_y
+            target_array[index + 5] = e_z
+            target_array[index + 6] = ev_x
+            target_array[index + 7] = ev_y
+            target_array[index + 8] = ev_z
+        
+        self.entity_counts[ENTITY_TYPE["CUBE"]] = 200
+
+    def _make_lights(self) -> None:
+        """
+            Make the lights!
+        """
+
+        for i in range(8):
+
+            x = np.random.uniform(low = -10, high = 10)
+            y = np.random.uniform(low = -10, high = 10)
+            z = np.random.uniform(low = -10, high = 10)
+
+            r = np.random.uniform(low = 0.5, high = 1.0)
+            g = np.random.uniform(low = 0.5, high = 1.0)
+            b = np.random.uniform(low = 0.5, high = 1.0)
+
+            s = np.random.uniform(low = 2, high = 5)
+
+            index = 7 * i
+            target_array = self.entities[ENTITY_TYPE["POINTLIGHT"]][0]
+
+            target_array[index] = x
+            target_array[index + 1] = y
+            target_array[index + 2] = z
+            target_array[index + 3] = r
+            target_array[index + 4] = g
+            target_array[index + 5] = b
+            target_array[index + 6] = s
+
+            index = 4 * i
+            target_array = self.entities[ENTITY_TYPE["POINTLIGHT"]][2]
+
+            target_array[index] = r
+            target_array[index + 1] = g
+            target_array[index + 2] = b
+            target_array[index + 3] = 1.0
+        
+        self.entity_counts[ENTITY_TYPE["POINTLIGHT"]] = 8
     
     def update(self, dt: float) -> None:
         """
@@ -489,11 +548,20 @@ class Scene:
                 dt: framerate correction factor
         """
 
-        for entities in self.entities.values():
-            for entity in entities:
-                entity.update(dt)
+        update_cubes(
+            cubes = self.entities[ENTITY_TYPE["CUBE"]][0],
+            transforms = self.entities[ENTITY_TYPE["CUBE"]][1],
+            count = self.entity_counts[ENTITY_TYPE["CUBE"]],
+            rate = dt
+        )
 
-        self.player.update(dt)
+        update_lights(
+            lights = self.entities[ENTITY_TYPE["POINTLIGHT"]][0],
+            transforms = self.entities[ENTITY_TYPE["POINTLIGHT"]][1],
+            count = self.entity_counts[ENTITY_TYPE["POINTLIGHT"]]
+        )
+
+        self.player.update()
 
     def move_player(self, d_pos: list[float]) -> None:
         """
@@ -613,6 +681,10 @@ class App:
         """
 
         self.renderer = GraphicsEngine()
+        self.renderer.register_entity(
+            PIPELINE_TYPE["STANDARD"], ENTITY_TYPE["CUBE"])
+        self.renderer.register_entity(
+            PIPELINE_TYPE["EMISSIVE"], ENTITY_TYPE["POINTLIGHT"])
 
         self.scene = Scene()
     
@@ -636,7 +708,8 @@ class App:
             self.scene.update(self.frametime / 16.67)
             
             self.renderer.render(
-                self.scene.player, self.scene.entities, self.scene.lights)
+                self.scene.player, self.scene.entities, 
+                self.scene.entity_counts)
 
             #timing
             self._calculate_framerate()
@@ -704,7 +777,9 @@ class GraphicsEngine:
     """
         Draws entities and stuff.
     """
-    __slots__ = ("meshes", "materials", "shaders", "storage_buffers")
+    __slots__ = (
+        "meshes", "materials", "shaders", 
+        "model_buffers", "color_buffers", "entity_types")
 
 
     def __init__(self):
@@ -745,10 +820,13 @@ class GraphicsEngine:
             ENTITY_TYPE["CUBE"]: AdvancedMaterial("crate", "png"),
         }
 
-        self.storage_buffers: dict[int, Buffer] = {
-            ENTITY_TYPE["CUBE"]: Buffer(
-                size = 1024, binding = 0, 
-                element_count = 16, dtype = np.float32)
+        self.model_buffers: dict[int, Buffer] = {
+            ENTITY_TYPE["CUBE"]: Buffer(size = 1024, binding = 0),
+            ENTITY_TYPE["POINTLIGHT"]: Buffer(size = 8, binding = 0)
+        }
+
+        self.color_buffers: dict[int, Buffer] = {
+            ENTITY_TYPE["POINTLIGHT"]: Buffer(size = 8, binding = 1)
         }
         
         self.shaders: dict[int, Shader] = {
@@ -756,6 +834,11 @@ class GraphicsEngine:
                 "shaders/vertex.glsl", "shaders/fragment.glsl"),
             PIPELINE_TYPE["EMISSIVE"]: Shader(
                 "shaders/simple_3d_vertex.glsl", "shaders/simple_3d_fragment.glsl"),
+        }
+
+        self.entity_types: dict[int, list[int]] = {
+            PIPELINE_TYPE["STANDARD"]: [],
+            PIPELINE_TYPE["EMISSIVE"]: [],
         }
 
     def _set_onetime_uniforms(self) -> None:
@@ -825,14 +908,23 @@ class GraphicsEngine:
         shader = self.shaders[PIPELINE_TYPE["EMISSIVE"]]
         shader.use()
 
-        shader.cache_single_location(UNIFORM_TYPE["MODEL"], "model")
         shader.cache_single_location(UNIFORM_TYPE["VIEW"], "view")
         shader.cache_single_location(UNIFORM_TYPE["TINT"], "color")
     
+    def register_entity(self, pipeline_type: int, entity_type: int) -> None:
+        """
+            Register an entity type to be rendered with the given pipeline.
+        """
+
+        if pipeline_type not in self.entity_types:
+            return
+
+        self.entity_types[pipeline_type].append(entity_type)
+    
     def render(self, 
         camera: Camera, 
-        renderables: dict[int, list[Entity]],
-        lights: list[PointLight]) -> None:
+        renderables: dict[int, list[np.ndarray]],
+        entity_counts: dict[int, int]) -> None:
         """
             Draw everything.
 
@@ -841,8 +933,7 @@ class GraphicsEngine:
                 camera: the scene's camera
 
                 renderables: all the entities to draw
-
-                lights: all the lights in the scene
+            
         """
 
         self._prepare_frame(renderables)
@@ -862,26 +953,19 @@ class GraphicsEngine:
             shader.fetch_single_location(UNIFORM_TYPE["CAMERA_POS"]),
             1, camera.position)
 
-        for i,light in enumerate(lights):
-
-            glUniform3fv(
-                shader.fetch_multi_location(UNIFORM_TYPE["LIGHT_POS"], i),
-                1, light.position)
-            glUniform3fv(
-                shader.fetch_multi_location(UNIFORM_TYPE["LIGHT_COLOR"], i),
-                1, light.color)
-            glUniform1f(
-                shader.fetch_multi_location(UNIFORM_TYPE["LIGHT_STRENGTH"], i),
-                light.strength)
+        self._record_lights(
+            shader, lights = renderables[ENTITY_TYPE["POINTLIGHT"]][0],
+            count = entity_counts[ENTITY_TYPE["POINTLIGHT"]])
         
-        for entity_type, entities in renderables.items():
+        for entity_type in renderables:
 
-            if entity_type not in self.storage_buffers:
+            if entity_type not in self.entity_types[PIPELINE_TYPE["STANDARD"]]:
                 continue
 
-            self.storage_buffers[entity_type].read_from()
+            self.model_buffers[entity_type].read_from()
             self.materials[entity_type].use()
-            self.meshes[entity_type].draw_instanced(0, len(entities))
+            self.meshes[entity_type].draw_instanced(
+                0, entity_counts[entity_type])
         
         shader = self.shaders[PIPELINE_TYPE["EMISSIVE"]]
         shader.use()
@@ -890,16 +974,15 @@ class GraphicsEngine:
             shader.fetch_single_location(UNIFORM_TYPE["VIEW"]),
             1, GL_FALSE, view)
 
-        mesh = self.meshes[ENTITY_TYPE["POINTLIGHT"]]
-        mesh.arm_for_drawing()
-        for light in lights:
-            
-            glUniformMatrix4fv(
-                shader.fetch_single_location(UNIFORM_TYPE["MODEL"]), 
-                1, GL_FALSE, light.get_model_transform())
-            glUniform3fv(shader.fetch_single_location(UNIFORM_TYPE["TINT"]), 
-                1, light.color)
-            mesh.draw()
+        for entity_type in renderables:
+
+            if entity_type not in self.entity_types[PIPELINE_TYPE["EMISSIVE"]]:
+                continue
+
+            self.model_buffers[entity_type].read_from()
+            self.color_buffers[entity_type].read_from()
+            self.meshes[entity_type].draw_instanced(
+                0, entity_counts[entity_type])
 
         glFlush()
     
@@ -908,15 +991,39 @@ class GraphicsEngine:
             Update storage buffers based on scene data.
         """
 
-        for entity_type, entities in renderables.items():
+        for entity_type, arrays in renderables.items():
 
-            if entity_type not in self.storage_buffers:
+            if entity_type not in self.model_buffers:
                 continue
+            self.model_buffers[entity_type].consume(arrays[1])
             
-            storage_buffer = self.storage_buffers[entity_type]
-            for i, entity in enumerate(entities):
-                model = entity.get_model_transform().reshape(16)
-                storage_buffer.record_element(i, model)
+            if entity_type not in self.color_buffers:
+                continue
+            self.color_buffers[entity_type].consume(arrays[2])
+
+    def _record_lights(self, 
+        shader: int, lights: np.ndarray, count: int) -> None:
+        """
+            Record light data in the shader uniform.
+        """
+
+        for i in range(count):
+            
+            index = 7 * i
+            
+            pos      = lights[index : index + 3]
+            color    = lights[index + 3 : index + 6]
+            strength = lights[index + 6]
+
+            glUniform3fv(
+                shader.fetch_multi_location(UNIFORM_TYPE["LIGHT_POS"], i),
+                1, pos)
+            glUniform3fv(
+                shader.fetch_multi_location(UNIFORM_TYPE["LIGHT_COLOR"], i),
+                1, color)
+            glUniform1f(
+                shader.fetch_multi_location(UNIFORM_TYPE["LIGHT_STRENGTH"], i),
+                strength)
 
     def destroy(self) -> None:
         """ free any allocated memory """
@@ -927,7 +1034,9 @@ class GraphicsEngine:
             material.destroy()
         for shader in self.shaders.values():
             shader.destroy()
-        for buffer in self.storage_buffers.values():
+        for buffer in self.model_buffers.values():
+            buffer.destroy()
+        for buffer in self.color_buffers.values():
             buffer.destroy()
 
 class Shader:
@@ -1015,52 +1124,42 @@ class Buffer:
     """
         Storage buffer, holds arbitrary homogenous data.
     """
-    __slots__ = (
-        "size", "binding", "element_count", 
-        "dtype", "host_memory", "device_memory", 
-        "elements_updated")
+    __slots__ = ("binding", "device_memory", "size")
 
-    def __init__(self, size: int, binding: int, element_count: int, dtype: np.dtype):
+
+    def __init__(self, size: int, binding: int):
         """
             Initialize the buffer.
 
             Parameters:
 
-                size: number of entries on the buffer.
+                size: number of bytes on the buffer.
 
                 binding: binding index
-
-                element_count: number of elements per entry
         """
 
         self.size = size
         self.binding = binding
-        self.element_count = element_count
-        self.dtype = dtype
-
-        self.host_memory = np.zeros(element_count * size, dtype=dtype)
 
         self.device_memory = glGenBuffers(1)
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.device_memory)
         glBufferStorage(
-            GL_SHADER_STORAGE_BUFFER, self.host_memory.nbytes, 
-            self.host_memory, GL_DYNAMIC_STORAGE_BIT)
+            GL_SHADER_STORAGE_BUFFER, self.size, None, GL_DYNAMIC_STORAGE_BIT)
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, binding, self.device_memory)
-        self.elements_updated = 0
     
-    def record_element(self, i: int, element: np.ndarray) -> None:
+    def consume(self, data: np.ndarray) -> None:
         """
             Record the given element in position i, if this exceeds the buffer size,
             the buffer is resized.
         """
 
-        if i >= self.size:
+        incoming_size = data.nbytes
+
+        while incoming_size > self.size:
             self.resize()
 
-        index = self.element_count * i
-        self.host_memory[index : index + self.element_count] = element[:]
-
-        self.elements_updated += 1
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.device_memory)
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, incoming_size, data)
     
     def resize(self) -> None:
         """
@@ -1069,28 +1168,19 @@ class Buffer:
 
         self.destroy()
 
-        new_size = self.size * 2
-
-        host_memory = np.zeros(self.element_count * new_size, dtype=self.dtype)
-        host_memory[0:self.element_count * self.size] = self.host_memory[:]
-        self.host_memory = host_memory
-        self.size = new_size
+        self.size *= 2
 
         self.device_memory = glGenBuffers(1)
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.device_memory)
-        glBufferStorage(
-            GL_SHADER_STORAGE_BUFFER, self.host_memory.nbytes, 
-            self.host_memory, GL_DYNAMIC_STORAGE_BIT)
+        glBufferStorage(GL_SHADER_STORAGE_BUFFER, self.size, 
+            None, GL_DYNAMIC_STORAGE_BIT)
 
     def read_from(self) -> None:
         """
             Upload the CPU data to the buffer, then arm it for reading.
         """
 
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, self.device_memory)
-        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, self.element_count * 4 * self.elements_updated, self.host_memory)
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, self.binding, self.device_memory)
-        self.elements_updated = 0
     
     def destroy(self) -> None:
         """
@@ -1185,10 +1275,10 @@ class AdvancedMaterial(Material):
         """
 
         self.textures: list[Material2D] = [
-            Material2D(f"gfx/{filename}_albedo.{filetype}", 0),
-            Material2D(f"gfx/{filename}_ao.{filetype}", 1),
-            Material2D(f"gfx/{filename}_normal.{filetype}", 2),
-            Material2D(f"gfx/{filename}_specular.{filetype}", 3),
+            Material2D(f"img/{filename}_albedo.{filetype}", 0),
+            Material2D(f"img/{filename}_ao.{filetype}", 1),
+            Material2D(f"img/{filename}_normal.{filetype}", 2),
+            Material2D(f"img/{filename}_specular.{filetype}", 3),
         ]
 
     def use(self) -> None:
@@ -1303,6 +1393,7 @@ class ObjMesh(Mesh):
         A mesh that loads its data from an obj file.
     """
     __slots__ = tuple()
+
 
     def __init__(self, filename: str):
         """
